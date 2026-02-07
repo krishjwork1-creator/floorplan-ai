@@ -20,7 +20,7 @@ function App() {
 
     try {
       console.log("Sending image to backend...");
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch('https://floorplan-ai-cgs8.onrender.com/upload', {
         method: 'POST',
         body: formData,
       });
@@ -48,7 +48,7 @@ const handleAiPrompt = async (prompt) => {
     setAiThinking(true);
 
     try {
-      const response = await fetch('http://localhost:8000/edit', {
+      const response = await fetch('https://floorplan-ai-cgs8.onrender.com/edit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

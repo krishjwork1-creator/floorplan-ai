@@ -39,7 +39,7 @@ function App() {
       // If deployed, use your Render URL.
       const API_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:8000' 
-        : 'https://floorplan-api-xyz.onrender.com'; // <--- CHECK THIS URL
+        : 'https://floorplan-ai-cgs8.onrender.com'; // <--- CHECK THIS URL
 
       const response = await fetch(`${API_URL}/upload`, {
         method: 'POST',
@@ -66,7 +66,7 @@ function App() {
     try {
       const API_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:8000' 
-        : 'https://floorplan-api-xyz.onrender.com'; // <--- CHECK THIS URL
+        : 'https://floorplan-ai-cgs8.onrender.com'; // <--- CHECK THIS URL
 
       const response = await fetch(`${API_URL}/edit`, {
         method: 'POST',

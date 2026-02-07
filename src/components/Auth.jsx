@@ -11,7 +11,15 @@ export function Auth() {
     setLoading(true)
     
     // This sends a "Magic Link" to the user's email
-    const { error } = await supabase.auth.signInWithOtp({ email })
+    const { error } = await supabase.auth.signInWithOtp({
+  email,
+  options: {
+    // This automatically picks the correct URL:
+    // - On localhost, it sends them to localhost:5173
+    // - On Vercel, it sends them to floorplan-ai.vercel.app
+    emailRedirectTo: window.location.origin, 
+  },
+})
 
     if (error) {
       alert(error.error_description || error.message)

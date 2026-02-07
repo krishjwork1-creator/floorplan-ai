@@ -21,7 +21,8 @@ export function Scene({ walls }) {
           key={index} 
           position={wallData.position} 
           size={wallData.size}
-          rotation={wallData.rotation} // <--- Pass the new rotation data
+          rotation={wallData.rotation}
+          color={wallData.color} // <--- Pass the color from AI to the Wall
         />
       ))}
 

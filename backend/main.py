@@ -7,7 +7,7 @@ import json
 from processor import process_image
 
 # --- CONFIGURATION ---
-API_KEY = "AIzaSyB6D1yyFiTkpOKqSRXvMEB2TS-cy6j47XE" # <--- PASTE YOUR KEY HERE
+API_KEY = "AIzaSyAHrI5zIwm3rxk7J2EoSwnXu0mRRNvKJwE" # <--- PASTE YOUR KEY HERE
 genai.configure(api_key=API_KEY)
 
 # --- DYNAMIC MODEL SELECTOR (The Fix) ---
@@ -68,33 +68,58 @@ async def upload_image(file: UploadFile = File(...)):
     walls = process_image(content)
     return {"walls": walls}
 
+def try_fix_json(bad_json):
+    """
+    Simple heuristic to fix common AI JSON errors
+    """
+    # 1. If it doesn't end with ']', add it
+    if not bad_json.strip().endswith("]"):
+        bad_json += "]"
+    # 2. Sometimes AI adds trailing commas like { "a": 1, } -> remove them
+    # (This is a simplified fix, for production use a library like 'json_repair')
+    return bad_json
+
 @app.post("/edit")
 async def edit_floorplan(request: EditRequest):
     print(f"Received Edit Request: '{request.prompt}'")
     
+    # 1. Prompt Tuning: Tell AI to be brief and strict
     system_instruction = f"""
-    Act as a JSON data processor. 
+    Act as a JSON API. You have one job: Return valid JSON.
+    
     User Request: "{request.prompt}"
     
     Current Data (Walls):
     {json.dumps(request.current_walls)}
     
     INSTRUCTIONS:
-    1. Modify the 'position', 'size', or 'rotation' of the walls based on the request.
-    2. If the user says "delete", remove the wall from the list.
-    3. If the user says "add", create a new wall entry.
-    4. RETURN ONLY VALID JSON. No markdown formatting. No explanation.
+    1. If the user asks to change color/texture, add a "color" property to the walls (e.g., "color": "#ffffff").
+    2. RETURN ONLY THE JSON LIST. Do not write "Here is the code".
+    3. Ensure every object is closed with }} and separated by commas.
     """
 
     try:
         response = model.generate_content(system_instruction)
-        clean_json = response.text.replace("```json", "").replace("```", "").strip()
-        new_walls = json.loads(clean_json)
+        raw_text = response.text
+
+        # 2. Aggressive Cleaning
+        # Remove markdown code blocks
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        
+        # 3. Parse
+        try:
+            new_walls = json.loads(clean_json)
+        except json.JSONDecodeError:
+            print("JSON Error detected. Attempting auto-fix...")
+            fixed_json = try_fix_json(clean_json)
+            new_walls = json.loads(fixed_json)
+
         print("Success! Sending new walls to frontend.")
         return {"walls": new_walls}
 
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"AI ERROR: {e}")
+        # On failure, return original walls so app doesn't crash
         return {"walls": request.current_walls}
 
 if __name__ == "__main__":

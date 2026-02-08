@@ -20,7 +20,7 @@ else:
 
 app = FastAPI()
 
-# --- 2. CORS (Explicitly trust your Vercel App) ---
+# --- 2. CORS (Trust your Vercel App) ---
 origins = [
     "http://localhost:5173",
     "https://floorplan-ai-seven.vercel.app",
@@ -35,26 +35,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 3. SMART MODEL SELECTION (Fixes 404) ---
+# --- 3. SMART MODEL SELECTION ---
 def get_working_model():
     """
     Finds a model that ACTUALLY exists on your server.
     """
     try:
-        print("🔍 Scanning for available AI models...")
+        print("🔍 Scanning available AI models...")
         # Get all models that support generating content
         all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Priority: Flash (Speed) -> Pro 1.5 (Quality) -> Pro 1.0 (Old Faithful)
+        # Priority: Flash (Speed) -> Pro 1.5 (Quality) -> Pro 1.0 (Reliability)
         preferences = [
             "models/gemini-1.5-flash",
             "models/gemini-1.5-flash-latest",
             "models/gemini-1.5-flash-001",
             "models/gemini-1.5-pro",
             "models/gemini-1.5-pro-latest",
-            "models/gemini-1.5-pro-001",
-            "models/gemini-pro",       # This one is usually always available
-            "models/gemini-1.0-pro"
+            "models/gemini-pro"
         ]
 
         # 1. Check for preferred models
@@ -69,7 +67,7 @@ def get_working_model():
                 print(f"⚠️ Preferred not found. Using fallback: {m}")
                 return m
                 
-        # 3. Last resort (if list fails)
+        # 3. Last resort
         return "models/gemini-pro"
             
     except Exception as e:
@@ -80,16 +78,29 @@ def get_working_model():
 MODEL_NAME = get_working_model()
 print(f"🚀 SERVER STARTED USING MODEL: {MODEL_NAME}")
 
-# --- 4. ROBUST JSON PARSER (Fixes 500) ---
+# --- 4. ROBUST JSON CLEANER (The Fix) ---
 def clean_json_response(text):
     """
-    Manually removes Markdown to prevent crashes.
+    Extracts purely the JSON list [...] from the text.
+    Ignores Markdown (```json), warnings, or intro text.
     """
-    cleaned = text.strip()
-    # Remove markdown code blocks (```json ... ```)
-    if "```" in cleaned:
-        cleaned = re.sub(r"```json|```", "", cleaned).strip()
-    return cleaned
+    try:
+        # Remove standard markdown code blocks first
+        text = re.sub(r"```json|```", "", text).strip()
+        
+        # 1. Try to find the first '[' and the last ']' (Array)
+        match = re.search(r'\[.*\]', text, re.DOTALL)
+        if match:
+            return match.group(0)
+        
+        # 2. If no array found, try to find object '{...}'
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return match.group(0)
+            
+        return text # Return original if regex fails (let json.loads try it)
+    except Exception:
+        return text
 
 # --- 5. ENDPOINTS ---
 @app.get("/")
@@ -113,10 +124,11 @@ async def upload_plan(file: UploadFile = File(...)):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
+        # Use more tokens to prevent "Unterminated string" (cutting off JSON)
         model = genai.GenerativeModel(
             MODEL_NAME, 
             safety_settings=safety_settings,
-            generation_config={"temperature": 0.2, "top_p": 0.8, "max_output_tokens": 4096}
+            generation_config={"temperature": 0.2, "top_p": 0.8, "max_output_tokens": 8192} 
         )
         
         contents = await file.read()
@@ -126,20 +138,28 @@ async def upload_plan(file: UploadFile = File(...)):
         Analyze this floor plan image. Extract all walls as a JSON list.
         Coordinate System: 0,0 is top-left. Scale roughly 0-10 units.
         
-        IMPORTANT: Output ONLY valid JSON. No text explanations.
-        JSON Format:
-        [{"start": [x1, y1], "end": [x2, y2], "thickness": 0.2, "height": 3, "texture": "brick|wood|concrete", "color": "white"}]
+        Output ONLY a valid JSON list. Do not add markdown blocks. Do not add comments.
+        Example Format:
+        [
+          {"start": [0, 0], "end": [5, 0], "thickness": 0.2, "height": 3, "texture": "concrete", "color": "white"}
+        ]
         """
         
         response = model.generate_content([prompt, image])
         
-        # Clean the response manually
+        # Debug Log: See exactly what the AI sent
+        print(f"🤖 AI Response (First 100 chars): {response.text[:100]}...")
+
+        # Clean and Parse
         cleaned_json = clean_json_response(response.text)
         return {"walls": json.loads(cleaned_json)}
 
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Parse Error: {e}")
+        # Return empty list to prevent frontend crash
+        return {"walls": []}
     except Exception as e:
-        print(f"❌ Error processing upload: {e}")
-        # Return empty walls instead of crashing, so the frontend stays alive
+        print(f"❌ General Error: {e}")
         return {"walls": []}
 
 @app.post("/edit")

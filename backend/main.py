@@ -7,7 +7,7 @@ import json
 from processor import process_image
 
 # --- CONFIGURATION ---
-API_KEY = "AIzaSyAHrI5zIwm3rxk7J2EoSwnXu0mRRNvKJwE" # <--- PASTE YOUR KEY HERE
+API_KEY = "AIzaSyAiPMKxop2BMR83yW4YKyrPBrrLT1PrI6o" # <--- PASTE YOUR KEY HERE
 genai.configure(api_key=API_KEY)
 
 # --- DYNAMIC MODEL SELECTOR (The Fix) ---

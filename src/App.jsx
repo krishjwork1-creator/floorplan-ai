@@ -100,7 +100,7 @@ function App() {
         {/* 1. BRAND HEADER */}
         <div className="p-6 border-b border-white/10 flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-black border border-white/10 flex items-center justify-center overflow-hidden shadow-lg shadow-indigo-500/20">
-            <img src="/Structura Logo.jpg" alt="Logo" className="w-full h-full object-cover opacity-90" />
+            <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover opacity-90" />
           </div>
           <span className="font-display font-bold text-lg tracking-tight text-white">Structura.AI</span>
         </div>

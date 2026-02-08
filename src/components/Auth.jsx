@@ -107,7 +107,7 @@ export function Auth() {
           {/* LOGO IMAGE */}
           <div className="w-10 h-10 rounded-xl bg-black border border-white/10 flex items-center justify-center overflow-hidden shadow-[0_0_15px_rgba(99,102,241,0.3)]">
             <img 
-              src="/Structura Logo.jpg" 
+              src="/logo.jpg" 
               alt="Logo" 
               className="w-full h-full object-cover opacity-90"
             />

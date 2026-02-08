@@ -37,7 +37,7 @@ app.add_middleware(
 # --- 3. MODEL CONFIGURATION ---
 # We use the specific stable version 'gemini-1.5-flash-001'
 # This ID is reliable and won't 404.
-MODEL_NAME = "gemini-1.5-flash-001"
+MODEL_NAME = "gemini-1.5-flash"
 
 generation_config = {
     "temperature": 0.2,

@@ -17,18 +17,27 @@ if not API_KEY:
 
 genai.configure(api_key=API_KEY)
 
-# 2. App Setup
+# ... (imports remain the same)
+
 app = FastAPI()
 
-# Allow frontend to talk to backend
+# --- FIX CORS ERROR ---
+# We explicitly list the allowed frontend URLs
+origins = [
+    "http://localhost:5173",                      # Localhost (for testing)
+    "https://floorplan-ai-seven.vercel.app",      # Your Vercel Frontend
+    "https://floorplan-ai-seven.vercel.app/"      # Trailing slash variation
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=origins,       # Use the specific list instead of ["*"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ... (rest of the code remains the same)
 # 3. Request Models
 class EditRequest(BaseModel):
     prompt: str

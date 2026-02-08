@@ -8,7 +8,7 @@ import json
 import os
 from dotenv import load_dotenv
 
-# --- 1. SETUP & SAFETY CHECKS ---
+# --- 1. SETUP ---
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -19,7 +19,7 @@ else:
 
 app = FastAPI()
 
-# --- 2. CORS (Explicitly trust your Vercel App) ---
+# --- 2. CORS (Trust your Vercel App) ---
 origins = [
     "http://localhost:5173",
     "https://floorplan-ai-seven.vercel.app",
@@ -34,11 +34,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 3. MODEL CONFIGURATION ---
-# We use the specific stable version 'gemini-1.5-flash-001'
-# This ID is reliable and won't 404.
-MODEL_NAME = "gemini-1.5-flash"
+# --- 3. SMART MODEL SELECTION (The Fix) ---
+def get_best_model():
+    """
+    Asks Google: "What models do you have?"
+    Picks the fastest available one (Flash > Pro > Standard).
+    """
+    try:
+        print("🔍 Scanning available AI models...")
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Priority list: We want Flash (speed), then Pro (quality), then whatever works.
+        preferences = [
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-flash-001",
+            "models/gemini-1.5-flash-latest",
+            "models/gemini-1.5-pro",
+            "models/gemini-pro"
+        ]
 
+        for pref in preferences:
+            if pref in available_models:
+                print(f"✅ FOUND MODEL: {pref}")
+                return pref
+        
+        # Fallback: Just take the first one available
+        if available_models:
+            print(f"⚠️ specific preference not found. Using fallback: {available_models[0]}")
+            return available_models[0]
+            
+    except Exception as e:
+        print(f"⚠️ Could not list models (API Key issue?): {e}")
+        
+    # Absolute backup if listing fails
+    return "gemini-1.5-flash"
+
+# Set the model name ONCE when server starts
+MODEL_NAME = get_best_model()
+
+# Configuration
 generation_config = {
     "temperature": 0.2,
     "top_p": 0.8,
@@ -49,7 +83,7 @@ generation_config = {
 # --- 4. ENDPOINTS ---
 @app.get("/")
 def health_check():
-    return {"status": "online", "model": MODEL_NAME}
+    return {"status": "online", "model_used": MODEL_NAME}
 
 class EditRequest(BaseModel):
     prompt: str
@@ -57,10 +91,9 @@ class EditRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_plan(file: UploadFile = File(...)):
-    print(f"📂 Endpoint hit! Receiving file: {file.filename}") 
+    print(f"📂 Endpoint hit! Using model: {MODEL_NAME}") 
     
     try:
-        # Initialize Model per request to prevent stale connections
         model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
         
         contents = await file.read()
@@ -78,12 +111,11 @@ async def upload_plan(file: UploadFile = File(...)):
 
     except Exception as e:
         print(f"❌ Error processing upload: {e}")
-        # If Flash fails, the user needs to know
-        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI Error ({MODEL_NAME}): {str(e)}")
 
 @app.post("/edit")
 async def edit_walls(request: EditRequest):
-    print(f"⚡ Endpoint hit! Command: {request.prompt}")
+    print(f"⚡ Endpoint hit! Using model: {MODEL_NAME}")
 
     try:
         model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)

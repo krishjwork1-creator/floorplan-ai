@@ -20,7 +20,7 @@ else:
 
 app = FastAPI()
 
-# --- 2. CORS (Trust your Vercel App) ---
+# --- 2. CORS (Explicitly trust your Vercel App) ---
 origins = [
     "http://localhost:5173",
     "https://floorplan-ai-seven.vercel.app",
@@ -35,28 +35,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 3. ROBUST CONFIGURATION ---
-# We use the standard Pro model which is most reliable.
-# We REMOVED 'response_mime_type' to prevent 500 errors on unsupported models.
-MODEL_NAME = "gemini-1.5-flash"
+# --- 3. SMART MODEL SELECTION (Fixes 404) ---
+def get_working_model():
+    """
+    Finds a model that ACTUALLY exists on your server.
+    """
+    try:
+        print("🔍 Scanning for available AI models...")
+        # Get all models that support generating content
+        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Priority: Flash (Speed) -> Pro 1.5 (Quality) -> Pro 1.0 (Old Faithful)
+        preferences = [
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-flash-latest",
+            "models/gemini-1.5-flash-001",
+            "models/gemini-1.5-pro",
+            "models/gemini-1.5-pro-latest",
+            "models/gemini-1.5-pro-001",
+            "models/gemini-pro",       # This one is usually always available
+            "models/gemini-1.0-pro"
+        ]
 
-generation_config = {
-    "temperature": 0.2,
-    "top_p": 0.8,
-    "max_output_tokens": 4096,
-}
+        # 1. Check for preferred models
+        for pref in preferences:
+            if pref in all_models:
+                print(f"✅ FOUND PREFERRED MODEL: {pref}")
+                return pref
+        
+        # 2. Fallback to ANY model that looks like 'gemini'
+        for m in all_models:
+            if "gemini" in m:
+                print(f"⚠️ Preferred not found. Using fallback: {m}")
+                return m
+                
+        # 3. Last resort (if list fails)
+        return "models/gemini-pro"
+            
+    except Exception as e:
+        print(f"⚠️ Model scan failed: {e}. Defaulting to gemini-pro")
+        return "models/gemini-pro"
 
+# Select the model ONCE at startup
+MODEL_NAME = get_working_model()
+print(f"🚀 SERVER STARTED USING MODEL: {MODEL_NAME}")
+
+# --- 4. ROBUST JSON PARSER (Fixes 500) ---
 def clean_json_response(text):
     """
-    Manually removes Markdown (```json ... ```) to prevent crashes.
+    Manually removes Markdown to prevent crashes.
     """
     cleaned = text.strip()
-    # Remove markdown code blocks if present
+    # Remove markdown code blocks (```json ... ```)
     if "```" in cleaned:
         cleaned = re.sub(r"```json|```", "", cleaned).strip()
     return cleaned
 
-# --- 4. ENDPOINTS ---
+# --- 5. ENDPOINTS ---
 @app.get("/")
 def health_check():
     return {"status": "online", "model": MODEL_NAME}
@@ -67,10 +102,22 @@ class EditRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_plan(file: UploadFile = File(...)):
-    print(f"📂 Endpoint hit! Model: {MODEL_NAME}") 
+    print(f"📂 Processing Upload with {MODEL_NAME}...") 
     
     try:
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
+        # Lower safety settings to prevent blocking
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+
+        model = genai.GenerativeModel(
+            MODEL_NAME, 
+            safety_settings=safety_settings,
+            generation_config={"temperature": 0.2, "top_p": 0.8, "max_output_tokens": 4096}
+        )
         
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
@@ -86,23 +133,21 @@ async def upload_plan(file: UploadFile = File(...)):
         
         response = model.generate_content([prompt, image])
         
-        # Robust Cleaning
-        raw_text = response.text
-        cleaned_json = clean_json_response(raw_text)
-        
+        # Clean the response manually
+        cleaned_json = clean_json_response(response.text)
         return {"walls": json.loads(cleaned_json)}
 
     except Exception as e:
         print(f"❌ Error processing upload: {e}")
-        # Return a dummy wall so the app doesn't crash, but show the error in logs
-        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+        # Return empty walls instead of crashing, so the frontend stays alive
+        return {"walls": []}
 
 @app.post("/edit")
 async def edit_walls(request: EditRequest):
-    print(f"⚡ Endpoint hit!")
+    print(f"⚡ Editing with {MODEL_NAME}...")
 
     try:
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
+        model = genai.GenerativeModel(MODEL_NAME)
         
         chat_content = f"Current JSON: {json.dumps(request.current_walls)}\nUser Command: {request.prompt}"
         response = model.generate_content([

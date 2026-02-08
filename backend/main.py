@@ -1,126 +1,135 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 import google.generativeai as genai
+from PIL import Image
+import io
 import json
-from processor import process_image
+import os
+from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
-API_KEY = "AIzaSyAiPMKxop2BMR83yW4YKyrPBrrLT1PrI6o" # <--- PASTE YOUR KEY HERE
+# 1. Load Environment Variables
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not API_KEY:
+    raise ValueError("❌ GEMINI_API_KEY not found in .env file")
+
 genai.configure(api_key=API_KEY)
 
-# --- DYNAMIC MODEL SELECTOR (The Fix) ---
-def get_working_model():
-    """
-    Asks Google which models are available for this API Key
-    and picks the best one automatically.
-    """
-    try:
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
-        
-        print(f"Your Available Models: {available_models}")
-
-        # Preference List: Try to find Flash first (fastest), then Pro (stable)
-        if "models/gemini-1.5-flash" in available_models:
-            return genai.GenerativeModel("models/gemini-1.5-flash")
-        elif "models/gemini-1.5-pro" in available_models:
-            return genai.GenerativeModel("models/gemini-1.5-pro")
-        elif "models/gemini-pro" in available_models:
-            return genai.GenerativeModel("models/gemini-pro")
-        else:
-            # Fallback to the first available model if nothing else matches
-            return genai.GenerativeModel(available_models[0])
-
-    except Exception as e:
-        print(f"Error listing models: {e}")
-        # Nuclear fallback: Try the oldest standard name
-        return genai.GenerativeModel("gemini-pro")
-
-# Initialize the model using the function
-model = get_working_model()
-
+# 2. App Setup
 app = FastAPI()
 
+# Allow frontend to talk to backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# 3. Request Models
 class EditRequest(BaseModel):
     prompt: str
     current_walls: list
 
-@app.get("/")
-def read_root():
-    return {"message": "Backend is running!"}
+# 4. Configuration for Speed (Flash Model + JSON Enforcement)
+# "gemini-1.5-flash" is 10x faster than Pro for these tasks.
+generation_config = {
+    "temperature": 0.2,             # Low creativity = faster, more precise
+    "top_p": 0.8,
+    "max_output_tokens": 4096,
+    "response_mime_type": "application/json", # FORCE JSON output
+}
 
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash", 
+    generation_config=generation_config
+)
+
+# --- ENDPOINT 1: UPLOAD FLOOR PLAN (Vision) ---
 @app.post("/upload")
-async def upload_image(file: UploadFile = File(...)):
-    print(f"Processing image: {file.filename}")
-    content = await file.read()
-    walls = process_image(content)
-    return {"walls": walls}
+async def upload_plan(file: UploadFile = File(...)):
+    print(f"📂 Received file: {file.filename}")
+    
+    try:
+        # Read and prepare image
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
 
-def try_fix_json(bad_json):
-    """
-    Simple heuristic to fix common AI JSON errors
-    """
-    # 1. If it doesn't end with ']', add it
-    if not bad_json.strip().endswith("]"):
-        bad_json += "]"
-    # 2. Sometimes AI adds trailing commas like { "a": 1, } -> remove them
-    # (This is a simplified fix, for production use a library like 'json_repair')
-    return bad_json
+        # System Prompt for Vision
+        prompt = """
+        Analyze this floor plan image. 
+        Extract all walls as a JSON list.
+        
+        Coordinate System:
+        - 0,0 is top-left.
+        - Scale roughly so the house width fits in 0-10 units.
+        
+        JSON Format:
+        [
+          {"start": [x1, y1], "end": [x2, y2], "thickness": 0.2, "height": 3, "texture": "brick|wood|concrete", "color": "white"}
+        ]
+        
+        Return ONLY the raw JSON.
+        """
 
+        # Generate (Flash is fast enough for Vision too)
+        response = model.generate_content([prompt, image])
+        
+        # Parse JSON
+        walls_data = json.loads(response.text)
+        print("✅ Vision processing complete.")
+        return {"walls": walls_data}
+
+    except Exception as e:
+        print(f"❌ Error in /upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- ENDPOINT 2: EDIT EXISTING WALLS (Text Logic) ---
 @app.post("/edit")
-async def edit_floorplan(request: EditRequest):
-    print(f"Received Edit Request: '{request.prompt}'")
-    
-    # 1. Prompt Tuning: Tell AI to be brief and strict
-    system_instruction = f"""
-    Act as a JSON API. You have one job: Return valid JSON.
-    
-    User Request: "{request.prompt}"
-    
-    Current Data (Walls):
-    {json.dumps(request.current_walls)}
-    
-    INSTRUCTIONS:
-    1. If the user asks to change color/texture, add a "color" property to the walls (e.g., "color": "#ffffff").
-    2. RETURN ONLY THE JSON LIST. Do not write "Here is the code".
-    3. Ensure every object is closed with }} and separated by commas.
-    """
+async def edit_walls(request: EditRequest):
+    print(f"⚡ Editing Command: {request.prompt}")
 
     try:
-        response = model.generate_content(system_instruction)
-        raw_text = response.text
-
-        # 2. Aggressive Cleaning
-        # Remove markdown code blocks
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        # Specialized Prompt for Editing
+        system_instruction = """
+        You are a real-time 3D architecture engine.
+        Your goal is to modify the provided JSON wall data based on the User Command.
         
-        # 3. Parse
-        try:
-            new_walls = json.loads(clean_json)
-        except json.JSONDecodeError:
-            print("JSON Error detected. Attempting auto-fix...")
-            fixed_json = try_fix_json(clean_json)
-            new_walls = json.loads(fixed_json)
+        Rules:
+        1. Return ONLY the modified JSON list. No markdown, no text.
+        2. Maintain the exact schema: {"start": [], "end": [], "thickness":, "height":, "texture":, "color":}
+        3. If the user asks to change color/texture, apply it to RELEVANT walls (or all if unspecified).
+        4. If the user asks to move/delete, modify the coordinates logic.
+        """
 
-        print("Success! Sending new walls to frontend.")
+        # Context: Current State + User Intent
+        chat_content = f"""
+        Current JSON: {json.dumps(request.current_walls)}
+        User Command: {request.prompt}
+        """
+
+        # Generate Response (Async for concurrency)
+        response = model.generate_content([system_instruction, chat_content])
+
+        # Clean and Parse
+        # Flash with 'application/json' config usually returns pure JSON, 
+        # but we strip just in case.
+        cleaned_text = response.text.strip()
+        if cleaned_text.startswith("```json"):
+            cleaned_text = cleaned_text[7:-3]
+            
+        new_walls = json.loads(cleaned_text)
+        
+        print("✅ Edit complete.")
         return {"walls": new_walls}
 
     except Exception as e:
-        print(f"AI ERROR: {e}")
-        # On failure, return original walls so app doesn't crash
+        print(f"❌ Error in /edit: {e}")
+        # Fallback: return original walls to prevent frontend crash
         return {"walls": request.current_walls}
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# Run with: uvicorn main:app --reload

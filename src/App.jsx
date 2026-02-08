@@ -46,7 +46,7 @@ function App() {
     try {
       const API_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:8000' 
-        : 'https://floorplan-ai-seven.onrender.com';
+        : 'https://floorplan-ai-cgs8.onrender.com';
 
       const response = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
       const data = await response.json();
@@ -61,7 +61,7 @@ function App() {
   const handleAiPrompt = async (prompt) => {
     setAiThinking(true);
     try {
-      const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://floorplan-ai-seven.onrender.com';
+      const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://floorplan-ai-cgs8.onrender.com';
       const response = await fetch(`${API_URL}/edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

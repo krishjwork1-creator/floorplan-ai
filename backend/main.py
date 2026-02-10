@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
@@ -17,41 +17,35 @@ if not API_KEY:
     print("🚨 CRITICAL: GEMINI_API_KEY is missing!")
 else:
     genai.configure(api_key=API_KEY)
-    print(f"✅ API Key loaded (starts with {API_KEY[:4]}...)")
-
-    # --- DIAGNOSTIC: PRINT AVAILABLE MODELS ---
-    print("\n🔍 --- DIAGNOSTIC START: AVAILABLE MODELS ---")
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                print(f"   • {m.name}")
-    except Exception as e:
-        print(f"   ❌ Could not list models: {e}")
-    print("🔍 --- DIAGNOSTIC END ---\n")
 
 app = FastAPI()
 
-# --- 2. CORS (Permissive for troubleshooting) ---
+# --- 2. CORS (Trust your Vercel App) ---
+origins = [
+    "http://localhost:5173",
+    "https://floorplan-ai-seven.vercel.app",
+    "https://floorplan-ai-seven.vercel.app/" 
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all for now to rule out CORS issues
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 3. ROBUST CLEANER ---
-def clean_json_response(text):
+# --- 3. ROBUST JSON SURGEON ---
+def extract_json(text):
     """
-    Forcefully extracts JSON from text, ignoring everything else.
+    Finds the JSON list [...] hidden inside the AI's text.
     """
     try:
-        # Find anything that looks like a JSON list [ ... ]
+        # Remove markdown code blocks (common cause of crashes)
+        text = re.sub(r"```json|```", "", text).strip()
+        
+        # Regex to find the first '[' and the last ']'
         match = re.search(r'\[.*\]', text, re.DOTALL)
-        if match:
-            return match.group(0)
-        # Find anything that looks like a JSON object { ... }
-        match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             return match.group(0)
         return text
@@ -69,65 +63,50 @@ class EditRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_plan(file: UploadFile = File(...)):
-    print(f"📂 endpoint /upload hit with file: {file.filename}")
+    print(f"📂 Processing Upload...")
     
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
-        # --- MODEL FALLBACK STRATEGY ---
-        # We try these models in order. If one 404s, we try the next.
+        # Priority List: Try the newest stable models first
         models_to_try = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-pro",
-            "gemini-pro" # The "Old Reliable"
+            "gemini-2.0-flash",     # Newest Stable
+            "gemini-1.5-flash-8b",  # Fastest Stable
+            "gemini-1.5-flash",     # Standard
+            "gemini-pro"            # Old Reliable
         ]
-
+        
         prompt = """
         Analyze this floor plan. Return a JSON list of walls.
         Format: [{"start": [x1, y1], "end": [x2, y2], "thickness": 0.2, "height": 3, "texture": "concrete", "color": "white"}]
         Coordinate System: 0,0 is top-left. Scale: 0-10.
         IMPORTANT: Return ONLY raw JSON. No markdown.
         """
-
-        # Disable safety settings to prevent blocks
-        safety = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-
-        last_error = None
         
+        # Try each model until one works
         for model_name in models_to_try:
-            print(f"🔄 Attempting with model: {model_name}...")
             try:
-                model = genai.GenerativeModel(model_name, safety_settings=safety)
+                print(f"🔄 Trying model: {model_name}")
+                model = genai.GenerativeModel(model_name)
                 response = model.generate_content([prompt, image])
                 
-                # If we get here, it worked!
-                print(f"✅ SUCCESS with {model_name}")
-                cleaned = clean_json_response(response.text)
-                return {"walls": json.loads(cleaned)}
+                # If we get here, the AI replied! Now let's safely parse it.
+                print(f"✅ Success with {model_name}")
+                clean_text = extract_json(response.text)
+                return {"walls": json.loads(clean_text)}
                 
             except Exception as e:
-                print(f"   ⚠️ Failed with {model_name}: {e}")
-                last_error = e
-                continue # Try next model
+                print(f"⚠️ {model_name} failed: {e}")
+                continue # Try the next model
         
-        # If all failed
         print("❌ All models failed.")
-        raise HTTPException(status_code=500, detail=f"AI Processing Failed: {str(last_error)}")
+        return {"walls": []} # Return empty, NOT a crash
 
     except Exception as e:
         print(f"❌ Critical Error: {e}")
-        return {"walls": []} # Return empty to prevent frontend crash
+        return {"walls": []} # Return empty, NOT a crash
 
 @app.post("/edit")
 async def edit_walls(request: EditRequest):
-    # Simplified edit endpoint that just returns current walls if AI fails
-    # This prevents the app from breaking during chats
-    print(f"⚡ endpoint /edit hit")
-    return {"walls": request.current_walls}
+    return {"walls": request.current_walls} # Placeholder to prevent edit crashes

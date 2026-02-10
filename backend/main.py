@@ -1,27 +1,18 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import google.generativeai as genai
 from PIL import Image
 import io
 import json
 import os
-import re
 from dotenv import load_dotenv
 
-# --- 1. SETUP ---
 load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not API_KEY:
-    print("🚨 CRITICAL: GEMINI_API_KEY is missing!")
-else:
-    genai.configure(api_key=API_KEY)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
-# --- 2. CORS (Trust your Vercel App) ---
-# We allow ALL origins (*) to rule out any connection blocking
+# Allow EVERYONE to connect. No security, just function.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,83 +21,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 3. ROBUST JSON SURGEON ---
-def extract_json(text):
-    """
-    Finds the JSON list [...] hidden inside the AI's text.
-    """
-    try:
-        # Remove markdown code blocks (common cause of crashes)
-        text = re.sub(r"```json|```", "", text).strip()
-        
-        # Regex to find the first '[' and the last ']'
-        match = re.search(r'\[.*\]', text, re.DOTALL)
-        if match:
-            return match.group(0)
-        return text
-    except:
-        return text
-
-# --- 4. ENDPOINTS ---
 @app.get("/")
-def health_check():
-    return {"status": "online", "message": "Backend is ready"}
-
-class EditRequest(BaseModel):
-    prompt: str
-    current_walls: list
+def home():
+    return {"status": "alive", "message": "I am here"}
 
 @app.post("/upload")
-async def upload_plan(file: UploadFile = File(...)):
-    print(f"📂 Processing Upload...")
-    
+async def upload_file(file: UploadFile = File(...)):
+    print("Received file...")
     try:
+        # 1. Read Image
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
-        # Priority List: Try these models in order.
-        # If one fails (404), it will catch the error and try the next.
-        models_to_try = [
-            "gemini-1.5-flash",     # Fast & New
-            "gemini-1.5-pro",       # High Quality
-            "gemini-pro",           # Old Reliable (Almost always works)
-            "gemini-1.0-pro"        # Backup
-        ]
+        # 2. Use the OLD RELIABLE model
+        model = genai.GenerativeModel('gemini-pro-vision') 
         
-        prompt = """
-        Analyze this floor plan. Return a JSON list of walls.
-        Format: [{"start": [x1, y1], "end": [x2, y2], "thickness": 0.2, "height": 3, "texture": "concrete", "color": "white"}]
-        Coordinate System: 0,0 is top-left. Scale: 0-10.
-        IMPORTANT: Return ONLY raw JSON. No markdown.
-        """
+        # 3. Simple Prompt
+        prompt = "Extract walls from this floorplan as a JSON list. Format: [{'start': [0,0], 'end': [1,1], 'thickness': 0.2, 'height': 3}]. Return ONLY JSON."
         
-        last_error = None
-
-        # --- THE SAFETY LOOP ---
-        for model_name in models_to_try:
-            try:
-                print(f"🔄 Attempting with model: {model_name}...")
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content([prompt, image])
-                
-                # If we get here, it worked!
-                print(f"✅ SUCCESS with {model_name}")
-                clean_text = extract_json(response.text)
-                return {"walls": json.loads(clean_text)}
-                
-            except Exception as e:
-                print(f"⚠️ Failed with {model_name}: {e}")
-                last_error = e
-                continue # Try the next model in the list
+        # 4. Generate
+        response = model.generate_content([prompt, image])
+        text = response.text
         
-        # If ALL models fail, return empty list (Don't crash!)
-        print("❌ All models failed.")
+        # 5. Dumb Cleanup (Just find the brackets)
+        start = text.find('[')
+        end = text.rfind(']') + 1
+        if start != -1 and end != -1:
+            clean_json = text[start:end]
+            return {"walls": json.loads(clean_json)}
+        else:
+            return {"walls": []}
+            
+    except Exception as e:
+        print(f"ERROR: {e}")
         return {"walls": []}
 
-    except Exception as e:
-        print(f"❌ Critical Error: {e}")
-        return {"walls": []} # Return empty list (Don't crash!)
-
 @app.post("/edit")
-async def edit_walls(request: EditRequest):
-    return {"walls": request.current_walls} # Placeholder to prevent edit crashes
+async def edit(request: dict):
+    return {"walls": request.get("current_walls", [])}

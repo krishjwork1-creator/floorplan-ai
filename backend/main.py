@@ -24,7 +24,7 @@ app = FastAPI()
 origins = [
     "http://localhost:5173",
     "https://floorplan-ai-cgs8.onrender.com", 
-    "https://floorplan-ai-cgs8.onrender.com/"
+    "https://floorplan-ai-seven.vercel.app/"
 ]
 
 app.add_middleware(

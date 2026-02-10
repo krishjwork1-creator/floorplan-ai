@@ -45,7 +45,7 @@ function App() {
       // DYNAMIC URL: Works on localhost AND Render
       const API_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:8000' 
-        : 'https://floorplan-ai-cgs8.onrender.com';
+        : 'https://floorplan-ai-seven.vercel.app';
 
       const response = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
       const data = await response.json();

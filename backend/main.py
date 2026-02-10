@@ -23,8 +23,8 @@ app = FastAPI()
 # --- 2. CORS (Allow Frontend Access) ---
 origins = [
     "http://localhost:5173",
-    "https://floorplan-ai-seven.vercel.app", 
-    "https://floorplan-ai-seven.vercel.app/"
+    "https://floorplan-ai-cgs8.onrender.com", 
+    "https://floorplan-ai-cgs8.onrender.com/"
 ]
 
 app.add_middleware(

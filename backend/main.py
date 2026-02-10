@@ -21,15 +21,10 @@ else:
 app = FastAPI()
 
 # --- 2. CORS (Trust your Vercel App) ---
-origins = [
-    "http://localhost:5173",
-    "https://floorplan-ai-seven.vercel.app",
-    "https://floorplan-ai-seven.vercel.app/" 
-]
-
+# We allow ALL origins (*) to rule out any connection blocking
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,12 +64,13 @@ async def upload_plan(file: UploadFile = File(...)):
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
-        # Priority List: Try the newest stable models first
+        # Priority List: Try these models in order.
+        # If one fails (404), it will catch the error and try the next.
         models_to_try = [
-            "gemini-2.0-flash",     # Newest Stable
-            "gemini-1.5-flash-8b",  # Fastest Stable
-            "gemini-1.5-flash",     # Standard
-            "gemini-pro"            # Old Reliable
+            "gemini-1.5-flash",     # Fast & New
+            "gemini-1.5-pro",       # High Quality
+            "gemini-pro",           # Old Reliable (Almost always works)
+            "gemini-1.0-pro"        # Backup
         ]
         
         prompt = """
@@ -84,28 +80,32 @@ async def upload_plan(file: UploadFile = File(...)):
         IMPORTANT: Return ONLY raw JSON. No markdown.
         """
         
-        # Try each model until one works
+        last_error = None
+
+        # --- THE SAFETY LOOP ---
         for model_name in models_to_try:
             try:
-                print(f"🔄 Trying model: {model_name}")
+                print(f"🔄 Attempting with model: {model_name}...")
                 model = genai.GenerativeModel(model_name)
                 response = model.generate_content([prompt, image])
                 
-                # If we get here, the AI replied! Now let's safely parse it.
-                print(f"✅ Success with {model_name}")
+                # If we get here, it worked!
+                print(f"✅ SUCCESS with {model_name}")
                 clean_text = extract_json(response.text)
                 return {"walls": json.loads(clean_text)}
                 
             except Exception as e:
-                print(f"⚠️ {model_name} failed: {e}")
-                continue # Try the next model
+                print(f"⚠️ Failed with {model_name}: {e}")
+                last_error = e
+                continue # Try the next model in the list
         
+        # If ALL models fail, return empty list (Don't crash!)
         print("❌ All models failed.")
-        return {"walls": []} # Return empty, NOT a crash
+        return {"walls": []}
 
     except Exception as e:
         print(f"❌ Critical Error: {e}")
-        return {"walls": []} # Return empty, NOT a crash
+        return {"walls": []} # Return empty list (Don't crash!)
 
 @app.post("/edit")
 async def edit_walls(request: EditRequest):

@@ -50,10 +50,14 @@ function App() {
 
       const response = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
       const data = await response.json();
-      if (data.walls) {
+      if (Array.isArray(data.walls)) {
         setWalls(data.walls);
         setSelectedWallIndex(null);
-      } else { alert("No walls found."); }
+      } else {
+  setWalls([]);
+  alert("No walls detected.");
+}
+
     } catch (error) { console.error(error); alert("Backend error."); } 
     finally { setLoading(false); }
   };
